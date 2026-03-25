@@ -3,16 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>股票熱力圖（可上傳 / 可分享）</title>
+  <title>股票熱力圖（精簡單層版）</title>
 
-  <!-- Plotly Treemap -->
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
-  <!-- CSV parser -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <!-- Excel parser (optional) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- URL-friendly compression -->
-  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 
   <style>
     :root { --border:#e5e7eb; --muted:#6b7280; }
@@ -21,325 +16,189 @@
     h1 { margin: 0; font-size: 18px; }
     .muted { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.5; }
     .bar { display:flex; gap:10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); align-items: center; }
-    .bar > * { font-size: 14px; }
     button { padding: 8px 10px; border: 1px solid var(--border); background: #fff; border-radius: 10px; cursor:pointer; }
     button:hover { background:#f9fafb; }
-    input[type="file"] { padding: 6px 0; }
-    input[type="text"] { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; min-width: 280px; }
-    #msg { padding: 0 16px 10px; color: #b91c1c; font-size: 13px; min-height: 18px; }
-    #chart { height: calc(100vh - 140px); }
+    #msg { padding: 10px 16px; color: #b91c1c; font-size: 13px; min-height: 18px; }
+    #chart { height: calc(100vh - 160px); }
     .ok { color: #047857 !important; }
-    details { padding: 0 16px 12px; border-bottom: 1px solid var(--border); }
-    pre { margin: 8px 0 0; background:#0b1020; color:#e5e7eb; padding: 12px; border-radius: 12px; overflow:auto; font-size: 12px; }
+    
+    /* 樹狀目錄樣式 */
+    #treeView { padding: 20px 16px; border-top: 1px solid var(--border); background: #fdfdfd; }
+    .tree-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    details { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+    summary { cursor: pointer; padding: 6px 4px; font-weight: 600; font-size: 14px; }
+    .tree-stock { margin-left: 10px; font-size: 13px; padding: 6px 4px; display: flex; border-bottom: 1px dashed #eee; }
+    .tree-stock a { text-decoration: none; color: inherit; flex-grow: 1; }
+    .val-pos { color: #d7191c; font-weight: bold; }
+    .val-neg { color: #1a9641; font-weight: bold; }
   </style>
 </head>
 
 <body>
   <header>
-    <h1>股票熱力圖（上傳資料 → 產生分享連結）</h1>
-    <div class="muted">
-      支援 CSV / XLSX / JSON。資料只在你的瀏覽器處理；按「產生分享連結」會把資料壓縮塞進網址 #hash，分享給別人即可看到同一張圖。
-    </div>
+    <h1>股票熱力圖（單層架構）</h1>
+    <div class="muted">僅保留「類股 → 股票」架構。支援拖拉 CSV/XLSX 上傳。</div>
   </header>
 
   <div class="bar">
-    <input id="file" type="file" accept=".csv,.xlsx,.xls,.json" />
-    <button id="btnExample">載入範例資料</button>
-    <button id="btnShare">產生分享連結</button>
-    <button id="btnCopy" disabled>複製分享連結</button>
-
-    <span class="muted">或從網址載入 CSV：</span>
-    <input id="csvUrl" type="text" placeholder="貼上 data.csv 的公開網址（raw）" />
-    <button id="btnLoadUrl">從網址載入</button>
+    <input id="file" type="file" accept=".csv,.xlsx,.xls" />
+    <button id="btnLoadDefault">重載 data.csv</button>
+    <label class="muted">期間：</label>
+    <select id="horizon">
+      <option value="1d" selected>近1日</option>
+      <option value="5d">近5日</option>
+      <option value="20d">近20日</option>
+    </select>
   </div>
 
   <div id="msg"></div>
-
-  <details>
-    <summary class="muted">資料格式（建議欄位）</summary>
-    <div class="muted">建議欄位：group, symbol, value, change（change 以 % 或數值皆可）。</div>
-    <pre>group,symbol,value,change
-半導體,2330,100,1.2
-半導體,2454,40,-0.8
-金融,2881,30,0.3
-航運,2603,20,-2.1</pre>
-  </details>
-
   <div id="chart"></div>
+  <div id="treeView"></div>
 
 <script>
   const $msg = document.getElementById('msg');
   const $file = document.getElementById('file');
-  const $btnExample = document.getElementById('btnExample');
-  const $btnShare = document.getElementById('btnShare');
-  const $btnCopy = document.getElementById('btnCopy');
-  const $csvUrl = document.getElementById('csvUrl');
-  const $btnLoadUrl = document.getElementById('btnLoadUrl');
+  const $horizon = document.getElementById('horizon');
+  let lastRawRows = null;
 
-  let lastRows = null; // normalized rows used for rendering
-
-  // ---- Utilities ----
   function setMsg(text, ok=false) {
     $msg.textContent = text || '';
     $msg.className = ok ? 'ok' : '';
   }
 
   function toNumber(x) {
-    if (x === null || x === undefined) return NaN;
-    if (typeof x === 'number') return x;
-    const s = String(x).trim().replace('%','');
-    const n = Number(s);
-    return Number.isFinite(n) ? n : NaN;
+    if (x == null) return NaN;
+    const s = String(x).replace(/,/g,'').replace(/%/g,'');
+    return Number(s);
   }
 
   function pickColumn(headers, candidates) {
-    const lower = headers.map(h => String(h).trim().toLowerCase());
+    const lower = headers.map(h => String(h).toLowerCase());
     for (const c of candidates) {
-      const idx = lower.indexOf(String(c).toLowerCase());
+      const idx = lower.indexOf(c.toLowerCase());
       if (idx >= 0) return headers[idx];
     }
     return null;
   }
 
-  function normalizeRows(rawRows) {
-    if (!Array.isArray(rawRows) || rawRows.length === 0) throw new Error('沒有讀到任何資料列。');
-
+  // 移除複雜判斷，簡化為單層正規化
+  function normalizeRows(rawRows, horizon) {
     const headers = Object.keys(rawRows[0] || {});
-    if (headers.length === 0) throw new Error('找不到欄位（header）。');
+    const colGroup = pickColumn(headers, ['group','sector','industry','產業','類股']);
+    const colSymbol = pickColumn(headers, ['symbol','name','名稱','股票']);
+    const colCode = pickColumn(headers, ['stock_code','code','代碼','股票代碼']);
+    
+    // 根據期間選擇對應欄位
+    const valFields = { '1d':['amt_1d','1日成交額'], '5d':['amt_5d','5日成交額'], '20d':['amt_20d','20日成交額'] };
+    const chgFields = { '1d':['chg_1d','漲跌幅','change'], '5d':['chg_5d','5日漲跌'], '20d':['chg_20d','20日漲跌'] };
 
-    const colGroup  = pickColumn(headers, ['group','sector','industry','分類','產業','類別']);
-    const colSymbol = pickColumn(headers, ['symbol','ticker','code','代碼','股票','stock','name']);
-    const colValue  = pickColumn(headers, ['value','size','market_cap','marketcap','weight','市值','權重','成交金額','amount']);
-    const colChange = pickColumn(headers, ['change','chg','return','pct','perf','漲跌','漲跌幅','報酬','報酬率']);
+    const colValue = pickColumn(headers, valFields[horizon] || ['amt_1d','成交額']);
+    const colChange = pickColumn(headers, chgFields[horizon] || ['change','漲跌幅']);
 
-    if (!colSymbol) throw new Error('找不到「symbol」欄位（可接受：symbol/ticker/code/代碼/股票）。');
-    if (!colChange) throw new Error('找不到「change」欄位（可接受：change/return/pct/漲跌幅）。');
-
-    const rows = rawRows.map((r, i) => {
-      const group = colGroup ? String(r[colGroup] ?? '未分類').trim() : '未分類';
-      const symbol = String(r[colSymbol] ?? '').trim();
-      const value = colValue ? toNumber(r[colValue]) : 1;
-      const change = toNumber(r[colChange]);
-
-      if (!symbol) return null;
-      return {
-        group,
-        symbol,
-        value: Number.isFinite(value) && value > 0 ? value : 1,
-        change: Number.isFinite(change) ? change : 0
-      };
-    }).filter(Boolean);
-
-    if (rows.length === 0) throw new Error('資料列解析後為空（可能 symbol 欄位都是空的）。');
-    return rows;
+    return rawRows.map(r => ({
+      group: String(r[colGroup] || '未分類').trim(),
+      symbol: String(r[colSymbol] || '').trim(),
+      code: String(r[colCode] || '').trim(),
+      value: toNumber(r[colValue]) || 1,
+      change: toNumber(r[colChange]) || 0
+    })).filter(r => r.symbol && r.code);
   }
 
-  function buildTreemap(rows) {
-    // Aggregate group sums & avg change (weighted by value)
-    const groupMap = new Map();
-    for (const r of rows) {
-      if (!groupMap.has(r.group)) groupMap.set(r.group, {value:0, wchg:0});
-      const g = groupMap.get(r.group);
-      g.value += r.value;
-      g.wchg += r.change * r.value;
-    }
+  function render(rawRows) {
+    const horizon = $horizon.value;
+    const rows = normalizeRows(rawRows, horizon);
+    
+    // 建立 Treemap 數據
+    const ids = ['root'], labels = ['全部'], parents = [''], values = [0], colors = [0], hovertexts = ['全部'];
+    const groups = [...new Set(rows.map(r => r.group))];
 
-    const labels = ['全部'];
-    const parents = [''];
-    const values = [0];
-    const colors = [0];
-    const custom = [{type:'root'}];
+    // 分組統計
+    groups.forEach(gName => {
+      const gStocks = rows.filter(r => r.group === gName);
+      const gValue = gStocks.reduce((sum, s) => sum + s.value, 0);
+      const gAvgChg = gStocks.reduce((sum, s) => sum + (s.change * s.value), 0) / gValue;
 
-    // groups
-    for (const [gname, g] of groupMap.entries()) {
-      labels.push(gname);
-      parents.push('全部');
-      values.push(g.value);
-      colors.push(g.value ? (g.wchg / g.value) : 0);
-      custom.push({type:'group', group:gname});
-    }
+      ids.push(`g|${gName}`);
+      labels.push(gName);
+      parents.push('root');
+      values.push(gValue);
+      colors.push(gAvgChg);
+      hovertexts.push(`<b>${gName}</b><br>總量：${gValue.toLocaleString()}<br>平均：${gAvgChg.toFixed(2)}%`);
 
-    // symbols
-    for (const r of rows) {
-      labels.push(r.symbol);
-      parents.push(r.group);
-      values.push(r.value);
-      colors.push(r.change);
-      custom.push({type:'symbol', group:r.group, symbol:r.symbol});
-    }
+      gStocks.forEach(s => {
+        ids.push(`s|${gName}|${s.symbol}`);
+        labels.push(`${s.symbol}<br>${s.change > 0 ? '+' : ''}${s.change}%`);
+        parents.push(`g|${gName}`);
+        values.push(s.value);
+        colors.push(s.change);
+        hovertexts.push(`<b>${s.symbol} (${s.code})</b><br>量：${s.value.toLocaleString()}<br>跌幅：${s.change}%`);
+      });
+    });
 
-    values[0] = Array.from(groupMap.values()).reduce((s,x)=>s+x.value,0);
+    values[0] = rows.reduce((sum, r) => sum + r.value, 0);
 
-    return {labels, parents, values, colors, custom};
-  }
-
-  function render(rows) {
-    const {labels, parents, values, colors, custom} = buildTreemap(rows);
-    lastRows = rows;
-
-    const data = [{
+    Plotly.newPlot('chart', [{
       type: 'treemap',
-      labels,
-      parents,
-      values,
+      ids, labels, parents, values, 
       branchvalues: 'total',
-      marker: {
-        colors,
-        colorscale: 'RdYlGn',
-        cmid: 0,
-        line: { width: 1, color: '#ffffff' }
-      },
-      customdata: custom,
-      hovertemplate:
-        '<b>%{label}</b><br>' +
-        '分類：%{parent}<br>' +
-        '大小：%{value}<br>' +
-        '變動：%{color:.2f}<extra></extra>'
-    }];
+      hovertext: hovertexts,
+      hovertemplate: '%{hovertext}<extra></extra>',
+      marker: { 
+        colors, 
+        colorscale: [[0, '#1a9641'], [0.5, '#f3f4f6'], [1, '#d7191c']],
+        cmid: 0 
+      }
+    }], { margin: { l: 0, r: 0, t: 30, b: 0 } });
 
-    const layout = {
-      margin: {l: 10, r: 10, t: 10, b: 10},
-      paper_bgcolor: 'white',
-      plot_bgcolor: 'white'
-    };
-
-    Plotly.newPlot('chart', data, layout, {responsive: true, displaylogo: false});
-    setMsg('已更新熱力圖。', true);
-    $btnCopy.disabled = true;
+    // 更新下方列表
+    renderList(rows, groups);
+    setMsg(`已更新（${horizon}）`, true);
   }
 
-  // ---- File loaders ----
-  function loadCSVText(text) {
-    const parsed = Papa.parse(text, {header: true, skipEmptyLines: true});
-    if (parsed.errors && parsed.errors.length) {
-      throw new Error('CSV 解析錯誤：' + parsed.errors[0].message);
-    }
-    return parsed.data;
+  function renderList(rows, groups) {
+    const container = document.getElementById('treeView');
+    // 依群組總成交額排序
+    const sortedGroups = groups.sort((a, b) => {
+      const sum = (g) => rows.filter(r => r.group === g).reduce((s, x) => s + x.value, 0);
+      return sum(b) - sum(a);
+    });
+
+    let html = '<div class="tree-grid">';
+    sortedGroups.forEach(g => {
+      const stocks = rows.filter(r => r.group === g).sort((a,b) => b.value - a.value);
+      html += `<details><summary>📁 ${g} (${stocks.length})</summary>`;
+      stocks.forEach(s => {
+        const c = s.change > 0 ? 'val-pos' : (s.change < 0 ? 'val-neg' : '');
+        const url = `https://www.fbs.com.tw/MKT/Index?name=%EF%BC%AB%E7%B7%9A%E5%9C%96&stock=${s.code}`;
+        html += `<div class="tree-stock"><a href="${url}" target="_blank">${s.symbol}</a><span class="${c}">${s.change}%</span></div>`;
+      });
+      html += `</details>`;
+    });
+    container.innerHTML = html + '</div>';
   }
 
-  async function handleFile(file) {
-    setMsg('');
-    const name = (file.name || '').toLowerCase();
-    const buf = await file.arrayBuffer();
-
-    if (name.endsWith('.csv')) {
-      const text = new TextDecoder('utf-8').decode(buf);
-      const rawRows = loadCSVText(text);
-      render(normalizeRows(rawRows));
-      return;
+  // 事件監聽
+  $file.onchange = async (e) => {
+    const f = e.target.files[0];
+    const buf = await f.arrayBuffer();
+    if (f.name.endsWith('.csv')) {
+      const text = new TextDecoder().decode(buf);
+      lastRawRows = Papa.parse(text, {header:true}).data;
+    } else {
+      const wb = XLSX.read(buf);
+      lastRawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
     }
+    render(lastRawRows);
+  };
 
-    if (name.endsWith('.json')) {
-      const text = new TextDecoder('utf-8').decode(buf);
-      const raw = JSON.parse(text);
-      const rawRows = Array.isArray(raw) ? raw : (raw.rows || raw.data || []);
-      render(normalizeRows(rawRows));
-      return;
-    }
-
-    if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-      const wb = XLSX.read(buf, {type: 'array'});
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rawRows = XLSX.utils.sheet_to_json(sheet, {defval: ''});
-      render(normalizeRows(rawRows));
-      return;
-    }
-
-    throw new Error('不支援的檔案格式。請用 CSV / XLSX / JSON。');
-  }
-
-  // ---- Share link (data in URL hash) ----
-  function makeShareLink(rows) {
-    const payload = {v: 1, rows};
-    const json = JSON.stringify(payload);
-    const compressed = LZString.compressToEncodedURIComponent(json);
-    const url = `${location.origin}${location.pathname}#data=${compressed}`;
-    return url;
-  }
-
-  function tryLoadFromHash() {
-    const hash = location.hash || '';
-    if (!hash.startsWith('#data=')) return false;
-    try {
-      const encoded = hash.slice(6);
-      const json = LZString.decompressFromEncodedURIComponent(encoded);
-      const payload = JSON.parse(json);
-      if (!payload || !Array.isArray(payload.rows)) throw new Error('hash 內容不正確');
-      render(payload.rows);
-      setMsg('已從分享連結載入資料。', true);
-      return true;
-    } catch (e) {
-      setMsg('分享連結解析失敗：' + (e?.message || e));
-      return false;
-    }
-  }
-
-  // ---- URL CSV loader ----
-  async function loadFromUrl(url) {
-    setMsg('');
-    if (!url) throw new Error('請貼上 CSV 的公開網址。');
-    const res = await fetch(url, {cache: 'no-store'});
-    if (!res.ok) throw new Error(`抓取失敗：HTTP ${res.status}`);
-    const text = await res.text();
-    const rawRows = loadCSVText(text);
-    render(normalizeRows(rawRows));
-  }
-
-  // ---- Events ----
-  $file.addEventListener('change', async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    try { await handleFile(f); }
-    catch (err) { setMsg(err?.message || String(err)); }
-  });
-
-  $btnExample.addEventListener('click', () => {
-    const rows = [
-      {group:'半導體', symbol:'2330', value:100, change: 1.2},
-      {group:'半導體', symbol:'2454', value: 40, change:-0.8},
-      {group:'金融',   symbol:'2881', value: 30, change: 0.3},
-      {group:'航運',   symbol:'2603', value: 20, change:-2.1},
-      {group:'AI',     symbol:'NVDA', value:120, change: 2.6},
-    ];
-    render(rows);
-  });
-
-  $btnShare.addEventListener('click', async () => {
-    try {
-      if (!lastRows) throw new Error('請先上傳資料或載入範例資料。');
-      const url = makeShareLink(lastRows);
-      // put into hash so current page becomes shareable
-      location.hash = url.split('#')[1];
-      setMsg('已產生分享連結（資料已寫入網址 #hash）。可按「複製分享連結」。', true);
-      $btnCopy.disabled = false;
-    } catch (err) {
-      setMsg(err?.message || String(err));
-    }
-  });
-
-  $btnCopy.addEventListener('click', async () => {
-    try {
-      const url = `${location.origin}${location.pathname}${location.hash}`;
-      await navigator.clipboard.writeText(url);
-      setMsg('已複製到剪貼簿。', true);
-    } catch (err) {
-      setMsg('複製失敗（瀏覽器可能不允許）。你可以手動複製網址列。');
-    }
-  });
-
-  $btnLoadUrl.addEventListener('click', async () => {
-    try {
-      await loadFromUrl($csvUrl.value.trim());
-    } catch (err) {
-      setMsg(err?.message || String(err));
-    }
-  });
-
-  // Auto-load if user opened a share link
-  if (!tryLoadFromHash()) {
-    // initial example
-    document.getElementById('btnExample').click();
-  }
+  $horizon.onchange = () => lastRawRows && render(lastRawRows);
+  
+  document.getElementById('btnLoadDefault').onclick = () => {
+    fetch('./data.csv').then(res => res.text()).then(txt => {
+      lastRawRows = Papa.parse(txt, {header:true}).data;
+      render(lastRawRows);
+    });
+  };
 </script>
 </body>
 </html>
