@@ -43,7 +43,6 @@
       font-size: 36px; 
       font-weight: 900;
       letter-spacing: 3px;
-      /* 金屬感流光特效 */
       background: linear-gradient(90deg, #004a92, #0072bc, #c5a059, #0072bc, #004a92);
       background-size: 200% auto;
       color: transparent;
@@ -81,16 +80,39 @@
       100% { left: 100%; }
     }
     
+    /* 左右交替閃爍的燈號與訊息 */
     #msg { 
       margin-top: 20px;
       font-size: 14px; 
       font-weight: 600; 
       letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .ok { color: #059669 !important; }
     .err { color: #dc2626 !important; }
-    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: currentColor; animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+    
+    .status-dot { 
+      display: inline-block; 
+      width: 8px; 
+      height: 8px; 
+      border-radius: 50%; 
+      background: currentColor;
+    }
+    .dot-left { margin-right: 10px; animation: flashLeft 1s infinite; }
+    .dot-right { margin-left: 10px; animation: flashRight 1s infinite; }
+    
+    /* 左燈：亮前半秒，暗後半秒 */
+    @keyframes flashLeft { 
+      0%, 49% { opacity: 1; box-shadow: 0 0 8px currentColor; } 
+      50%, 100% { opacity: 0.15; box-shadow: none; } 
+    }
+    /* 右燈：暗前半秒，亮後半秒 (完美交替) */
+    @keyframes flashRight { 
+      0%, 49% { opacity: 0.15; box-shadow: none; } 
+      50%, 100% { opacity: 1; box-shadow: 0 0 8px currentColor; } 
+    }
     
     /* 圖表容器 */
     #chart { 
@@ -158,8 +180,8 @@
     .tree-stock a { text-decoration: none; color: #334155; font-weight: 600; }
     .tree-stock a:hover { color: var(--fubon-blue); }
     
-    .val-pos { color: #e11d48; font-weight: 800; } /* 更加鮮亮的紅 */
-    .val-neg { color: #16a34a; font-weight: 800; } /* 更加鮮亮的綠 */
+    .val-pos { color: #e11d48; font-weight: 800; } 
+    .val-neg { color: #16a34a; font-weight: 800; } 
   </style>
 </head>
 
@@ -169,7 +191,11 @@
       <h1>富邦投顧｜盤中產業熱力圖</h1>
     </div>
     <div class="title-underline"></div>
-    <div id="msg"><span class="status-dot"></span> 系統同步中...</div>
+    <div id="msg">
+      <span class="status-dot dot-left"></span>
+      <span id="msg-text">系統同步中...</span>
+      <span class="status-dot dot-right"></span>
+    </div>
   </header>
 
   <div id="chart"></div>
@@ -183,9 +209,11 @@
 
 <script>
   const $msg = document.getElementById('msg');
+  const $msgText = document.getElementById('msg-text');
 
+  // 更新訊息，並保留左右燈號結構
   function setMsg(text, isOk=true) {
-    $msg.innerHTML = `<span class="status-dot"></span> ${text}`;
+    $msgText.textContent = text;
     $msg.className = isOk ? 'ok' : 'err';
   }
 
@@ -205,7 +233,7 @@
     return null;
   }
 
-  function render(rawRows) {
+  function render(rawRows, fileUpdateTime) {
     if (!rawRows || rawRows.length === 0) return setMsg('未偵測到有效 CSV 數據', false);
 
     const headers = Object.keys(rawRows[0]);
@@ -270,7 +298,9 @@
     }, { responsive: true, displaylogo: false });
 
     renderList(rows, groups);
-    setMsg(`數據連線正常｜同步時間：${new Date().toLocaleTimeString()}`);
+    
+    // 顯示 data.csv 的實際更新時間
+    setMsg(`數據連線正常｜資料更新：${fileUpdateTime}`);
   }
 
   function renderList(rows, groups) {
@@ -296,12 +326,29 @@
 
   window.onload = () => {
     fetch('./data.csv', { cache: 'no-store' })
-      .then(res => res.ok ? res.text() : Promise.reject('請確認同資料夾內存有 data.csv'))
-      .then(csvText => {
-        const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
-        render(parsed.data);
+      .then(res => {
+        if (!res.ok) throw new Error('請確認同資料夾內存有 data.csv');
+        
+        // 抓取 HTTP Header 中的檔案最後修改時間 (Last-Modified)
+        const lastMod = res.headers.get('Last-Modified');
+        let updateTimeStr = '';
+        
+        if (lastMod) {
+          // 如果伺服器有回傳正確的標頭，轉換成本地時間格式 (例如：2026/03/25 10:30:00)
+          const d = new Date(lastMod);
+          updateTimeStr = d.toLocaleString('zh-TW', { hour12: false });
+        } else {
+          // 如果是本地開檔 (file://) 或是伺服器不支援，則 fallback 顯示當下網頁載入時間
+          updateTimeStr = new Date().toLocaleString('zh-TW', { hour12: false }) + ' (本機載入時間)';
+        }
+        
+        return res.text().then(text => ({ text, updateTimeStr }));
       })
-      .catch(err => setMsg(`初始化失敗: ${err}`, false));
+      .then(({ text, updateTimeStr }) => {
+        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+        render(parsed.data, updateTimeStr);
+      })
+      .catch(err => setMsg(`初始化失敗: ${err.message || err}`, false));
   };
 </script>
 </body>
