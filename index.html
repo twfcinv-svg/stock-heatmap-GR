@@ -103,12 +103,10 @@
     .dot-left { margin-right: 10px; animation: flashLeft 1s infinite; }
     .dot-right { margin-left: 10px; animation: flashRight 1s infinite; }
     
-    /* 左燈：亮前半秒，暗後半秒 */
     @keyframes flashLeft { 
       0%, 49% { opacity: 1; box-shadow: 0 0 8px currentColor; } 
       50%, 100% { opacity: 0.15; box-shadow: none; } 
     }
-    /* 右燈：暗前半秒，亮後半秒 (完美交替) */
     @keyframes flashRight { 
       0%, 49% { opacity: 0.15; box-shadow: none; } 
       50%, 100% { opacity: 1; box-shadow: 0 0 8px currentColor; } 
@@ -162,9 +160,35 @@
       box-shadow: 0 10px 25px rgba(0,74,146,0.08); 
       transform: translateY(-3px);
     }
-    summary { cursor: pointer; font-weight: 700; font-size: 16px; color: #1e293b; list-style: none; display: flex; justify-content: space-between; align-items: center; outline: none; }
-    summary span { font-size: 13px; color: var(--muted); font-weight: 400; }
-    summary::after { content: "+"; font-size: 18px; color: var(--fubon-blue); transition: 0.3s; }
+    
+    /* 調整 summary 排版，讓輔助資訊靠左並排 */
+    summary { 
+      cursor: pointer; 
+      font-weight: 700; 
+      font-size: 16px; 
+      color: #1e293b; 
+      list-style: none; 
+      display: flex; 
+      align-items: center; 
+      outline: none; 
+    }
+    summary::-webkit-details-marker { display: none; }
+    .group-info { 
+      margin-left: 10px; 
+      font-size: 13px; 
+      color: var(--muted); 
+      font-weight: 500; 
+      background: #f1f5f9;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    summary::after { 
+      content: "+"; 
+      font-size: 20px; 
+      color: var(--fubon-blue); 
+      transition: 0.3s; 
+      margin-left: auto; /* 確保加號靠右對齊 */
+    }
     details[open] summary::after { content: "-"; transform: rotate(180deg); }
     
     .tree-stock { 
@@ -211,7 +235,6 @@
   const $msg = document.getElementById('msg');
   const $msgText = document.getElementById('msg-text');
 
-  // 更新訊息，並保留左右燈號結構
   function setMsg(text, isOk=true) {
     $msgText.textContent = text;
     $msg.className = isOk ? 'ok' : 'err';
@@ -299,7 +322,6 @@
 
     renderList(rows, groups);
     
-    // 顯示 data.csv 的實際更新時間
     setMsg(`數據連線正常｜資料更新：${fileUpdateTime}`);
   }
 
@@ -312,6 +334,10 @@
 
     grid.innerHTML = sortedGroups.map(g => {
       const stocks = rows.filter(r => r.group === g).sort((a,b) => b.value - a.value);
+      
+      // ★ 計算該類別的總成交額
+      const totalAmount = stocks.reduce((sum, s) => sum + s.value, 0);
+      
       const stockHtml = stocks.map(s => {
         const c = s.change > 0 ? 'val-pos' : (s.change < 0 ? 'val-neg' : '');
         const url = `https://www.fbs.com.tw/MKT/Index?name=%EF%BC%AB%E7%B7%9A%E5%9C%96&stock=${s.code}`;
@@ -320,7 +346,14 @@
                   <span class="${c}">${s.change > 0 ? '+' : ''}${s.change}%</span>
                 </div>`;
       }).join('');
-      return `<details><summary>${g} <span>(${stocks.length} 檔)</span></summary>${stockHtml}</details>`;
+      
+      // ★ 更新 summary：加入 class="group-info" 顯示檔數與總額，並使用 toLocaleString() 格式化數字
+      return `<details>
+                <summary>
+                  ${g} <span class="group-info">${stocks.length} 檔 ｜ 總額: ${totalAmount.toLocaleString()}</span>
+                </summary>
+                ${stockHtml}
+              </details>`;
     }).join('');
   }
 
@@ -329,16 +362,13 @@
       .then(res => {
         if (!res.ok) throw new Error('請確認同資料夾內存有 data.csv');
         
-        // 抓取 HTTP Header 中的檔案最後修改時間 (Last-Modified)
         const lastMod = res.headers.get('Last-Modified');
         let updateTimeStr = '';
         
         if (lastMod) {
-          // 如果伺服器有回傳正確的標頭，轉換成本地時間格式 (例如：2026/03/25 10:30:00)
           const d = new Date(lastMod);
           updateTimeStr = d.toLocaleString('zh-TW', { hour12: false });
         } else {
-          // 如果是本地開檔 (file://) 或是伺服器不支援，則 fallback 顯示當下網頁載入時間
           updateTimeStr = new Date().toLocaleString('zh-TW', { hour12: false }) + ' (本機載入時間)';
         }
         
