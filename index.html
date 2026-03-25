@@ -3,49 +3,189 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>股票熱力圖（自動載入版）</title>
+  <title>富邦投顧｜盤中產業熱力圖</title>
 
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <style>
-    :root { --border:#e5e7eb; --muted:#6b7280; }
-    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; background: #f9fafb; }
-    header { padding: 16px; border-bottom: 1px solid var(--border); background: #fff; display: flex; justify-content: space-between; align-items: center; }
-    h1 { margin: 0; font-size: 18px; color: #111827; }
-    #msg { padding: 8px 16px; font-size: 13px; min-height: 20px; }
-    #chart { height: calc(100vh - 120px); background: #fff; }
-    .ok { color: #047857; }
-    .err { color: #b91c1c; }
+    :root { 
+      --fubon-blue: #004a92;
+      --fubon-gold: #c5a059;
+      --border:#e5e7eb; 
+      --muted:#64748b; 
+    }
+    body { margin: 0; font-family: "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; background: #f8fafc; color: #1e293b; }
     
-    /* 下方清單樣式 */
-    #treeView { padding: 20px 16px; border-top: 1px solid var(--border); background: #fff; }
-    .tree-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-    details { border: 1px solid var(--border); border-radius: 8px; padding: 10px; transition: all 0.2s; }
-    details[open] { border-color: #3b82f6; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-    summary { cursor: pointer; font-weight: 600; font-size: 14px; user-select: none; }
-    .tree-stock { margin-top: 8px; padding: 6px; display: flex; border-bottom: 1px dashed #eee; font-size: 13px; }
-    .tree-stock a { text-decoration: none; color: #374151; flex-grow: 1; }
-    .tree-stock a:hover { color: #2563eb; }
-    .val-pos { color: #d7191c; font-weight: bold; }
-    .val-neg { color: #1a9641; font-weight: bold; }
+    /* 標題區塊特效 */
+    header { 
+      padding: 40px 20px; 
+      background: #fff; 
+      display: flex;
+      flex-direction: column;
+      align-items: center; 
+      justify-content: center;
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+    }
+
+    .title-wrapper {
+      position: relative;
+      cursor: default;
+      transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .title-wrapper:hover {
+      transform: scale(1.03);
+    }
+
+    h1 { 
+      margin: 0; 
+      font-size: 36px; 
+      font-weight: 900;
+      letter-spacing: 3px;
+      /* 金屬感流光特效 */
+      background: linear-gradient(90deg, #004a92, #0072bc, #c5a059, #0072bc, #004a92);
+      background-size: 200% auto;
+      color: transparent;
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: shine 5s linear infinite;
+      text-shadow: 0 10px 20px rgba(0,74,146,0.1);
+    }
+
+    @keyframes shine {
+      to { background-position: 200% center; }
+    }
+
+    /* 置中動態裝飾線 */
+    .title-underline {
+      width: 120px;
+      height: 4px;
+      background: #e2e8f0;
+      margin-top: 15px;
+      border-radius: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    .title-underline::after {
+      content: "";
+      position: absolute;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, var(--fubon-blue), var(--fubon-gold), transparent);
+      animation: scan 2.5s infinite;
+    }
+    @keyframes scan {
+      0% { left: -100%; }
+      100% { left: 100%; }
+    }
+    
+    #msg { 
+      margin-top: 20px;
+      font-size: 14px; 
+      font-weight: 600; 
+      letter-spacing: 1px;
+    }
+    .ok { color: #059669 !important; }
+    .err { color: #dc2626 !important; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: currentColor; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+    
+    /* 圖表容器 */
+    #chart { 
+      height: calc(100vh - 220px); 
+      background: #fff; 
+      border-radius: 16px; 
+      margin: 24px; 
+      box-shadow: 0 15px 35px rgba(0,0,0,0.06);
+      overflow: hidden; 
+      border: 1px solid var(--border);
+    }
+    
+    /* 數據清單區塊 */
+    #treeView { padding: 50px 24px; background: #f1f5f9; }
+    .list-header { 
+      margin: 0 auto 30px; 
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .list-title { 
+      font-size: 20px; 
+      color: #0f172a; 
+      font-weight: 800; 
+      border-left: 5px solid var(--fubon-blue);
+      padding-left: 12px;
+    }
+
+    .tree-grid { 
+      display: grid; 
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); 
+      gap: 24px; 
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    details { 
+      background: #fff; 
+      border: 1px solid var(--border); 
+      border-radius: 14px; 
+      padding: 16px; 
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+    }
+    details:hover { 
+      border-color: var(--fubon-blue);
+      box-shadow: 0 10px 25px rgba(0,74,146,0.08); 
+      transform: translateY(-3px);
+    }
+    summary { cursor: pointer; font-weight: 700; font-size: 16px; color: #1e293b; list-style: none; display: flex; justify-content: space-between; align-items: center; outline: none; }
+    summary span { font-size: 13px; color: var(--muted); font-weight: 400; }
+    summary::after { content: "+"; font-size: 18px; color: var(--fubon-blue); transition: 0.3s; }
+    details[open] summary::after { content: "-"; transform: rotate(180deg); }
+    
+    .tree-stock { 
+      margin-top: 12px; 
+      padding: 12px 8px; 
+      display: flex; 
+      justify-content: space-between;
+      border-bottom: 1px solid #f1f5f9; 
+      font-size: 15px; 
+      transition: background 0.2s;
+    }
+    .tree-stock:hover { background: #f8fafc; border-radius: 6px; }
+    .tree-stock a { text-decoration: none; color: #334155; font-weight: 600; }
+    .tree-stock a:hover { color: var(--fubon-blue); }
+    
+    .val-pos { color: #e11d48; font-weight: 800; } /* 更加鮮亮的紅 */
+    .val-neg { color: #16a34a; font-weight: 800; } /* 更加鮮亮的綠 */
   </style>
 </head>
 
 <body>
   <header>
-    <h1>富邦投顧｜盤中產業熱力圖</h1>
-    <div id="msg">正在載入數據...</div>
+    <div class="title-wrapper">
+      <h1>富邦投顧｜盤中產業熱力圖</h1>
+    </div>
+    <div class="title-underline"></div>
+    <div id="msg"><span class="status-dot"></span> 系統同步中...</div>
   </header>
 
   <div id="chart"></div>
-  <div id="treeView"></div>
+  
+  <div id="treeView">
+    <div class="list-header">
+      <div class="list-title">盤中資金流向監測</div>
+    </div>
+    <div id="treeGrid" class="tree-grid"></div>
+  </div>
 
 <script>
   const $msg = document.getElementById('msg');
 
   function setMsg(text, isOk=true) {
-    $msg.textContent = text;
+    $msg.innerHTML = `<span class="status-dot"></span> ${text}`;
     $msg.className = isOk ? 'ok' : 'err';
   }
 
@@ -56,7 +196,6 @@
     return isNaN(n) ? 0 : n;
   }
 
-  // 自動辨識欄位
   function pickColumn(headers, candidates) {
     const lowerHeaders = headers.map(h => String(h).toLowerCase());
     for (const c of candidates) {
@@ -67,10 +206,7 @@
   }
 
   function render(rawRows) {
-    if (!rawRows || rawRows.length === 0) {
-      setMsg('CSV 資料格式錯誤或為空', false);
-      return;
-    }
+    if (!rawRows || rawRows.length === 0) return setMsg('未偵測到有效 CSV 數據', false);
 
     const headers = Object.keys(rawRows[0]);
     const colGroup = pickColumn(headers, ['group','sector','industry','產業','類股']);
@@ -80,14 +216,14 @@
     const colChange = pickColumn(headers, ['chg_1d','漲跌幅','change','pct']);
 
     const rows = rawRows.map(r => ({
-      group: String(r[colGroup] || '未分類').trim(),
+      group: String(r[colGroup] || '其他').trim(),
       symbol: String(r[colSymbol] || '').trim(),
       code: String(r[colCode] || '').trim(),
-      value: Math.max(toNumber(r[colValue]), 1), // 確保面積不為0
+      value: Math.max(toNumber(r[colValue]), 1),
       change: toNumber(r[colChange])
     })).filter(r => r.symbol && r.code);
 
-    const ids = ['root'], labels = ['全部'], parents = [''], values = [0], colors = [0], hovertexts = ['全部'];
+    const ids = ['root'], labels = ['台股產業總覽'], parents = [''], values = [0], colors = [0], hovertexts = ['台股產業總覽'];
     const groups = [...new Set(rows.map(r => r.group))];
 
     groups.forEach(gName => {
@@ -96,11 +232,11 @@
       const gWeightedChg = gStocks.reduce((sum, s) => sum + (s.change * s.value), 0) / gTotalValue;
 
       ids.push(`g|${gName}`);
-      labels.push(gName);
+      labels.push(`<b>${gName}</b>`);
       parents.push('root');
       values.push(gTotalValue);
       colors.push(gWeightedChg);
-      hovertexts.push(`<b>${gName}</b><br>類股成交額：${gTotalValue.toLocaleString()}<br>平均漲跌：${gWeightedChg.toFixed(2)}%`);
+      hovertexts.push(`<b>【${gName}】</b><br>類股總額：${gTotalValue.toLocaleString()}<br>平均漲跌：${gWeightedChg.toFixed(2)}%`);
 
       gStocks.forEach(s => {
         ids.push(`s|${gName}|${s.symbol}`);
@@ -114,7 +250,7 @@
 
     values[0] = rows.reduce((sum, r) => sum + r.value, 0);
 
-    const data = [{
+    Plotly.newPlot('chart', [{
       type: 'treemap',
       ids, labels, parents, values,
       branchvalues: 'total',
@@ -123,53 +259,49 @@
       textinfo: 'label',
       marker: {
         colors,
-        colorscale: [[0, '#1a9641'], [0.5, '#f3f4f6'], [1, '#d7191c']],
+        colorscale: [[0, '#16a34a'], [0.5, '#f1f5f9'], [1, '#e11d48']],
         cmid: 0,
-        line: { width: 1, color: '#fff' }
+        line: { width: 2, color: '#fff' }
       }
-    }];
-
-    Plotly.newPlot('chart', data, { margin: { l: 0, r: 0, t: 0, b: 0 } }, { responsive: true, displaylogo: false });
+    }], { 
+      margin: { l: 0, r: 0, t: 0, b: 0 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)'
+    }, { responsive: true, displaylogo: false });
 
     renderList(rows, groups);
-    setMsg(`更新時間：${new Date().toLocaleTimeString()}`, true);
+    setMsg(`數據連線正常｜同步時間：${new Date().toLocaleTimeString()}`);
   }
 
   function renderList(rows, groups) {
-    const container = document.getElementById('treeView');
+    const grid = document.getElementById('treeGrid');
     const sortedGroups = groups.sort((a, b) => {
       const sum = (g) => rows.filter(r => r.group === g).reduce((s, x) => s + x.value, 0);
       return sum(b) - sum(a);
     });
 
-    let html = '<div class="tree-grid">';
-    sortedGroups.forEach(g => {
+    grid.innerHTML = sortedGroups.map(g => {
       const stocks = rows.filter(r => r.group === g).sort((a,b) => b.value - a.value);
-      html += `<details><summary>📁 ${g} (${stocks.length} 檔)</summary>`;
-      stocks.forEach(s => {
+      const stockHtml = stocks.map(s => {
         const c = s.change > 0 ? 'val-pos' : (s.change < 0 ? 'val-neg' : '');
         const url = `https://www.fbs.com.tw/MKT/Index?name=%EF%BC%AB%E7%B7%9A%E5%9C%96&stock=${s.code}`;
-        html += `<div class="tree-stock"><a href="${url}" target="_blank">${s.symbol} (${s.code})</a><span class="${c}">${s.change}%</span></div>`;
-      });
-      html += `</details>`;
-    });
-    container.innerHTML = html + '</div>';
+        return `<div class="tree-stock">
+                  <a href="${url}" target="_blank">${s.symbol} <small style="color:#94a3b8">(${s.code})</small></a>
+                  <span class="${c}">${s.change > 0 ? '+' : ''}${s.change}%</span>
+                </div>`;
+      }).join('');
+      return `<details><summary>${g} <span>(${stocks.length} 檔)</span></summary>${stockHtml}</details>`;
+    }).join('');
   }
 
-  // 初始化自動執行
   window.onload = () => {
     fetch('./data.csv', { cache: 'no-store' })
-      .then(res => {
-        if (!res.ok) throw new Error('找不到 data.csv 檔案');
-        return res.text();
-      })
+      .then(res => res.ok ? res.text() : Promise.reject('請確認同資料夾內存有 data.csv'))
       .then(csvText => {
         const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
         render(parsed.data);
       })
-      .catch(err => {
-        setMsg(`載入失敗：${err.message}`, false);
-      });
+      .catch(err => setMsg(`初始化失敗: ${err}`, false));
   };
 </script>
 </body>
