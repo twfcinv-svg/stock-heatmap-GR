@@ -161,7 +161,7 @@
       transform: translateY(-3px);
     }
     
-    /* 調整 summary 排版，讓輔助資訊靠左並排 */
+    /* 調整 summary 排版 */
     summary { 
       cursor: pointer; 
       font-weight: 700; 
@@ -187,7 +187,7 @@
       font-size: 20px; 
       color: var(--fubon-blue); 
       transition: 0.3s; 
-      margin-left: auto; /* 確保加號靠右對齊 */
+      margin-left: auto;
     }
     details[open] summary::after { content: "-"; transform: rotate(180deg); }
     
@@ -281,13 +281,16 @@
       const gStocks = rows.filter(r => r.group === gName);
       const gTotalValue = gStocks.reduce((sum, s) => sum + s.value, 0);
       const gWeightedChg = gStocks.reduce((sum, s) => sum + (s.change * s.value), 0) / gTotalValue;
+      
+      // ★ 直接四捨五入取到個位數（原始資料即為億）
+      const gAmountInYi = Math.round(gTotalValue);
 
       ids.push(`g|${gName}`);
       labels.push(`<b>${gName}</b>`);
       parents.push('root');
       values.push(gTotalValue);
       colors.push(gWeightedChg);
-      hovertexts.push(`<b>【${gName}】</b><br>類股總額：${gTotalValue.toLocaleString()}<br>平均漲跌：${gWeightedChg.toFixed(2)}%`);
+      hovertexts.push(`<b>【${gName}】</b><br>成交額(億)：${gAmountInYi.toLocaleString()}<br>平均漲跌：${gWeightedChg.toFixed(2)}%`);
 
       gStocks.forEach(s => {
         ids.push(`s|${gName}|${s.symbol}`);
@@ -295,7 +298,9 @@
         parents.push(`g|${gName}`);
         values.push(s.value);
         colors.push(s.change);
-        hovertexts.push(`<b>${s.symbol} (${s.code})</b><br>成交額：${s.value.toLocaleString()}<br>漲跌幅：${s.change}%`);
+        
+        // ★ 個股的數值也一併反映原始單位的文字
+        hovertexts.push(`<b>${s.symbol} (${s.code})</b><br>成交額(億)：${Math.round(s.value).toLocaleString()}<br>漲跌幅：${s.change}%`);
       });
     });
 
@@ -335,8 +340,10 @@
     grid.innerHTML = sortedGroups.map(g => {
       const stocks = rows.filter(r => r.group === g).sort((a,b) => b.value - a.value);
       
-      // ★ 計算該類別的總成交額
       const totalAmount = stocks.reduce((sum, s) => sum + s.value, 0);
+      
+      // ★ 直接四捨五入取到個位數（原始資料即為億）
+      const amountInYi = Math.round(totalAmount);
       
       const stockHtml = stocks.map(s => {
         const c = s.change > 0 ? 'val-pos' : (s.change < 0 ? 'val-neg' : '');
@@ -347,10 +354,9 @@
                 </div>`;
       }).join('');
       
-      // ★ 更新 summary：加入 class="group-info" 顯示檔數與總額，並使用 toLocaleString() 格式化數字
       return `<details>
                 <summary>
-                  ${g} <span class="group-info">${stocks.length} 檔 ｜ 總額: ${totalAmount.toLocaleString()}</span>
+                  ${g} <span class="group-info">${stocks.length} 檔 ｜ 成交額(億): ${amountInYi.toLocaleString()}</span>
                 </summary>
                 ${stockHtml}
               </details>`;
