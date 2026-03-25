@@ -3,32 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>股票熱力圖（精簡單層版）</title>
+  <title>股票熱力圖（自動載入版）</title>
 
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <style>
     :root { --border:#e5e7eb; --muted:#6b7280; }
-    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; }
-    header { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-    h1 { margin: 0; font-size: 18px; }
-    .muted { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.5; }
-    .bar { display:flex; gap:10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); align-items: center; }
-    button { padding: 8px 10px; border: 1px solid var(--border); background: #fff; border-radius: 10px; cursor:pointer; }
-    button:hover { background:#f9fafb; }
-    #msg { padding: 10px 16px; color: #b91c1c; font-size: 13px; min-height: 18px; }
-    #chart { height: calc(100vh - 160px); }
-    .ok { color: #047857 !important; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; background: #f9fafb; }
+    header { padding: 16px; border-bottom: 1px solid var(--border); background: #fff; display: flex; justify-content: space-between; align-items: center; }
+    h1 { margin: 0; font-size: 18px; color: #111827; }
+    #msg { padding: 8px 16px; font-size: 13px; min-height: 20px; }
+    #chart { height: calc(100vh - 120px); background: #fff; }
+    .ok { color: #047857; }
+    .err { color: #b91c1c; }
     
-    /* 樹狀目錄樣式 */
-    #treeView { padding: 20px 16px; border-top: 1px solid var(--border); background: #fdfdfd; }
-    .tree-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-    details { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
-    summary { cursor: pointer; padding: 6px 4px; font-weight: 600; font-size: 14px; }
-    .tree-stock { margin-left: 10px; font-size: 13px; padding: 6px 4px; display: flex; border-bottom: 1px dashed #eee; }
-    .tree-stock a { text-decoration: none; color: inherit; flex-grow: 1; }
+    /* 下方清單樣式 */
+    #treeView { padding: 20px 16px; border-top: 1px solid var(--border); background: #fff; }
+    .tree-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    details { border: 1px solid var(--border); border-radius: 8px; padding: 10px; transition: all 0.2s; }
+    details[open] { border-color: #3b82f6; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    summary { cursor: pointer; font-weight: 600; font-size: 14px; user-select: none; }
+    .tree-stock { margin-top: 8px; padding: 6px; display: flex; border-bottom: 1px dashed #eee; font-size: 13px; }
+    .tree-stock a { text-decoration: none; color: #374151; flex-grow: 1; }
+    .tree-stock a:hover { color: #2563eb; }
     .val-pos { color: #d7191c; font-weight: bold; }
     .val-neg { color: #1a9641; font-weight: bold; }
   </style>
@@ -36,94 +34,73 @@
 
 <body>
   <header>
-    <h1>股票熱力圖（單層架構）</h1>
-    <div class="muted">僅保留「類股 → 股票」架構。支援拖拉 CSV/XLSX 上傳。</div>
+    <h1>今日股票熱力圖</h1>
+    <div id="msg">正在載入數據...</div>
   </header>
 
-  <div class="bar">
-    <input id="file" type="file" accept=".csv,.xlsx,.xls" />
-    <button id="btnLoadDefault">重載 data.csv</button>
-    <label class="muted">期間：</label>
-    <select id="horizon">
-      <option value="1d" selected>近1日</option>
-      <option value="5d">近5日</option>
-      <option value="20d">近20日</option>
-    </select>
-  </div>
-
-  <div id="msg"></div>
   <div id="chart"></div>
   <div id="treeView"></div>
 
 <script>
   const $msg = document.getElementById('msg');
-  const $file = document.getElementById('file');
-  const $horizon = document.getElementById('horizon');
-  let lastRawRows = null;
 
-  function setMsg(text, ok=false) {
-    $msg.textContent = text || '';
-    $msg.className = ok ? 'ok' : '';
+  function setMsg(text, isOk=true) {
+    $msg.textContent = text;
+    $msg.className = isOk ? 'ok' : 'err';
   }
 
   function toNumber(x) {
-    if (x == null) return NaN;
+    if (x == null) return 0;
     const s = String(x).replace(/,/g,'').replace(/%/g,'');
-    return Number(s);
+    const n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
   }
 
+  // 自動辨識欄位
   function pickColumn(headers, candidates) {
-    const lower = headers.map(h => String(h).toLowerCase());
+    const lowerHeaders = headers.map(h => String(h).toLowerCase());
     for (const c of candidates) {
-      const idx = lower.indexOf(c.toLowerCase());
+      const idx = lowerHeaders.indexOf(c.toLowerCase());
       if (idx >= 0) return headers[idx];
     }
     return null;
   }
 
-  // 移除複雜判斷，簡化為單層正規化
-  function normalizeRows(rawRows, horizon) {
-    const headers = Object.keys(rawRows[0] || {});
+  function render(rawRows) {
+    if (!rawRows || rawRows.length === 0) {
+      setMsg('CSV 資料格式錯誤或為空', false);
+      return;
+    }
+
+    const headers = Object.keys(rawRows[0]);
     const colGroup = pickColumn(headers, ['group','sector','industry','產業','類股']);
     const colSymbol = pickColumn(headers, ['symbol','name','名稱','股票']);
     const colCode = pickColumn(headers, ['stock_code','code','代碼','股票代碼']);
-    
-    // 根據期間選擇對應欄位
-    const valFields = { '1d':['amt_1d','1日成交額'], '5d':['amt_5d','5日成交額'], '20d':['amt_20d','20日成交額'] };
-    const chgFields = { '1d':['chg_1d','漲跌幅','change'], '5d':['chg_5d','5日漲跌'], '20d':['chg_20d','20日漲跌'] };
+    const colValue = pickColumn(headers, ['amt_1d','成交額','amount','vol']);
+    const colChange = pickColumn(headers, ['chg_1d','漲跌幅','change','pct']);
 
-    const colValue = pickColumn(headers, valFields[horizon] || ['amt_1d','成交額']);
-    const colChange = pickColumn(headers, chgFields[horizon] || ['change','漲跌幅']);
-
-    return rawRows.map(r => ({
+    const rows = rawRows.map(r => ({
       group: String(r[colGroup] || '未分類').trim(),
       symbol: String(r[colSymbol] || '').trim(),
       code: String(r[colCode] || '').trim(),
-      value: toNumber(r[colValue]) || 1,
-      change: toNumber(r[colChange]) || 0
+      value: Math.max(toNumber(r[colValue]), 1), // 確保面積不為0
+      change: toNumber(r[colChange])
     })).filter(r => r.symbol && r.code);
-  }
 
-  function render(rawRows) {
-    const horizon = $horizon.value;
-    const rows = normalizeRows(rawRows, horizon);
-    
-    // 建立 Treemap 數據
     const ids = ['root'], labels = ['全部'], parents = [''], values = [0], colors = [0], hovertexts = ['全部'];
     const groups = [...new Set(rows.map(r => r.group))];
 
-    // 分組統計
     groups.forEach(gName => {
       const gStocks = rows.filter(r => r.group === gName);
-      const gValue = gStocks.reduce((sum, s) => sum + s.value, 0);
-      const gAvgChg = gStocks.reduce((sum, s) => sum + (s.change * s.value), 0) / gValue;
+      const gTotalValue = gStocks.reduce((sum, s) => sum + s.value, 0);
+      const gWeightedChg = gStocks.reduce((sum, s) => sum + (s.change * s.value), 0) / gTotalValue;
 
       ids.push(`g|${gName}`);
       labels.push(gName);
       parents.push('root');
-      values.push(gValue);
-      colors.push(gAvgChg);
-      hovertexts.push(`<b>${gName}</b><br>總量：${gValue.toLocaleString()}<br>平均：${gAvgChg.toFixed(2)}%`);
+      values.push(gTotalValue);
+      colors.push(gWeightedChg);
+      hovertexts.push(`<b>${gName}</b><br>類股成交額：${gTotalValue.toLocaleString()}<br>平均漲跌：${gWeightedChg.toFixed(2)}%`);
 
       gStocks.forEach(s => {
         ids.push(`s|${gName}|${s.symbol}`);
@@ -131,33 +108,35 @@
         parents.push(`g|${gName}`);
         values.push(s.value);
         colors.push(s.change);
-        hovertexts.push(`<b>${s.symbol} (${s.code})</b><br>量：${s.value.toLocaleString()}<br>跌幅：${s.change}%`);
+        hovertexts.push(`<b>${s.symbol} (${s.code})</b><br>成交額：${s.value.toLocaleString()}<br>漲跌幅：${s.change}%`);
       });
     });
 
     values[0] = rows.reduce((sum, r) => sum + r.value, 0);
 
-    Plotly.newPlot('chart', [{
+    const data = [{
       type: 'treemap',
-      ids, labels, parents, values, 
+      ids, labels, parents, values,
       branchvalues: 'total',
       hovertext: hovertexts,
       hovertemplate: '%{hovertext}<extra></extra>',
-      marker: { 
-        colors, 
+      textinfo: 'label',
+      marker: {
+        colors,
         colorscale: [[0, '#1a9641'], [0.5, '#f3f4f6'], [1, '#d7191c']],
-        cmid: 0 
+        cmid: 0,
+        line: { width: 1, color: '#fff' }
       }
-    }], { margin: { l: 0, r: 0, t: 30, b: 0 } });
+    }];
 
-    // 更新下方列表
+    Plotly.newPlot('chart', data, { margin: { l: 0, r: 0, t: 0, b: 0 } }, { responsive: true, displaylogo: false });
+
     renderList(rows, groups);
-    setMsg(`已更新（${horizon}）`, true);
+    setMsg(`更新時間：${new Date().toLocaleTimeString()}`, true);
   }
 
   function renderList(rows, groups) {
     const container = document.getElementById('treeView');
-    // 依群組總成交額排序
     const sortedGroups = groups.sort((a, b) => {
       const sum = (g) => rows.filter(r => r.group === g).reduce((s, x) => s + x.value, 0);
       return sum(b) - sum(a);
@@ -166,38 +145,31 @@
     let html = '<div class="tree-grid">';
     sortedGroups.forEach(g => {
       const stocks = rows.filter(r => r.group === g).sort((a,b) => b.value - a.value);
-      html += `<details><summary>📁 ${g} (${stocks.length})</summary>`;
+      html += `<details><summary>📁 ${g} (${stocks.length} 檔)</summary>`;
       stocks.forEach(s => {
         const c = s.change > 0 ? 'val-pos' : (s.change < 0 ? 'val-neg' : '');
         const url = `https://www.fbs.com.tw/MKT/Index?name=%EF%BC%AB%E7%B7%9A%E5%9C%96&stock=${s.code}`;
-        html += `<div class="tree-stock"><a href="${url}" target="_blank">${s.symbol}</a><span class="${c}">${s.change}%</span></div>`;
+        html += `<div class="tree-stock"><a href="${url}" target="_blank">${s.symbol} (${s.code})</a><span class="${c}">${s.change}%</span></div>`;
       });
       html += `</details>`;
     });
     container.innerHTML = html + '</div>';
   }
 
-  // 事件監聽
-  $file.onchange = async (e) => {
-    const f = e.target.files[0];
-    const buf = await f.arrayBuffer();
-    if (f.name.endsWith('.csv')) {
-      const text = new TextDecoder().decode(buf);
-      lastRawRows = Papa.parse(text, {header:true}).data;
-    } else {
-      const wb = XLSX.read(buf);
-      lastRawRows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-    }
-    render(lastRawRows);
-  };
-
-  $horizon.onchange = () => lastRawRows && render(lastRawRows);
-  
-  document.getElementById('btnLoadDefault').onclick = () => {
-    fetch('./data.csv').then(res => res.text()).then(txt => {
-      lastRawRows = Papa.parse(txt, {header:true}).data;
-      render(lastRawRows);
-    });
+  // 初始化自動執行
+  window.onload = () => {
+    fetch('./data.csv', { cache: 'no-store' })
+      .then(res => {
+        if (!res.ok) throw new Error('找不到 data.csv 檔案');
+        return res.text();
+      })
+      .then(csvText => {
+        const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        render(parsed.data);
+      })
+      .catch(err => {
+        setMsg(`載入失敗：${err.message}`, false);
+      });
   };
 </script>
 </body>
